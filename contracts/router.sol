@@ -26,36 +26,11 @@ contract Router is Ownable{
 
     event DepositFunds(address _addr, address _col, address _paired, uint256 _colAmt, uint48 _expiry, uint256 _mintRatio);
     event RepayFunds(address _col, address _paired, uint48 _expiry, uint256 _mintRatio, uint256 _rrTokenAmt);
-    event ChingizFlashLoan(address _col, address _paired, uint256 _colAmt);
 
 
     constructor(address _rulerCore){
         rulerCore = IRulerCore(_rulerCore);
         flashLender = IERC3156FlashLender(_rulerCore);
-    }
-
-    function getPairMintInfo(address _col) external view returns(uint256){
-        return rulerCore.getPairList(_col)[0].mintRatio;
-    }
-    
-    function getPairedTokenInfo(address _col) external view returns(address){
-        return rulerCore.getPairList(_col)[0].pairedToken;
-    }
-    
-    function getPairExpiryInfo(address _col) external view returns(uint256){
-        return rulerCore.getPairList(_col)[0].expiry;
-    }
-
-    function getPairRRToken(address _col) external view returns(IERC20){
-        return rulerCore.getPairList(_col)[0].rrToken;
-    }
-
-    function getPairRCToken(address _col) external view returns(IERC20){
-        return rulerCore.getPairList(_col)[0].rcToken;
-    }
-
-    function getPairForCollateral(address _col) external view returns(Pair memory){
-        return rulerCore.getPairList(_col)[0];
     }
 
     function depositFunds(
@@ -75,7 +50,6 @@ contract Router is Ownable{
         emit DepositFunds(address(rulerCore), _col, _paired, _colAmt, _expiry, _mintRatio);
     }
     
-
     function repayFunds(
         address _col,
         address _paired,
@@ -101,7 +75,7 @@ contract Router is Ownable{
     }
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
-        RolloverData memory rData = abi.decode(data, (RolloverData));
+        RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
         require(initiator == address(this), "RulerFlashBorrower: Untrusted loan initiator");
         
@@ -113,10 +87,7 @@ contract Router is Ownable{
         uint256 amountOwed = amount + fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
         IERC20(token).approve(address(flashLender), amountOwed);
-
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
-    }
-    
-    
+    }   
 }
 
