@@ -9,13 +9,14 @@ import "./interfaces/IRulerCore.sol";
 import "./utils/Ownable.sol";
 import "hardhat/console.sol";
 
+/** @title Auto Loan Rollover Router. */
 contract Router is Ownable{
     using SafeERC20 for IERC20;
     
     struct RolloverData {
-        address pairedToken;
+        IERC20 pairedToken;
         uint256 pairedAmt;
-        address colToken;
+        IERC20 colToken;
         uint256 colAmt;
         uint48 expiry;
         uint256 mintRatio;
@@ -33,17 +34,17 @@ contract Router is Ownable{
         flashLender = IERC3156FlashLender(_rulerCore);
     }
 
+
+    /** @dev Deposits the funds on behalf of the user. Keeps the r tokens in itself.
+      * @param _col Height of the rectangle.
+      */
     function depositFunds(
         address _col,
         address _paired,
-        uint256 _colAmt
+        uint256 _colAmt,
+        uint48 _expiry,
+        uint256 _mintRatio
     ) public {
-        //Check if collateral supported.
-        // require rulerCore.getPairList(_col) length > 0
-        uint48 _expiry = rulerCore.getPairList(_col)[0].expiry;
-        uint256 _mintRatio = rulerCore.getPairList(_col)[0].mintRatio;
-        
-        //Get the address of the ERC20 token that would be a collateral
         IERC20 collateral = IERC20(_col);
         collateral.safeApprove(address(rulerCore), _colAmt);
         rulerCore.deposit(_col, _paired, _expiry, _mintRatio, _colAmt);
@@ -53,32 +54,31 @@ contract Router is Ownable{
     function repayFunds(
         address _col,
         address _paired,
-        uint256 _pairedAmt
+        uint256 _pairedAmt,
+        uint48 _expiry,
+        uint256 _mintRatio
     ) public {
-        uint48 _expiry = rulerCore.getPairList(_col)[0].expiry;
-        uint256 _mintRatio = rulerCore.getPairList(_col)[0].mintRatio;
         IERC20 paired = IERC20(_paired);
-        uint256 _rrTokenAmt = _pairedAmt;//paired.balanceOf(address(this));
+        uint256 _rrTokenAmt = _pairedAmt;
         paired.safeApprove(address(rulerCore), _rrTokenAmt);
         rulerCore.repay(_col, _paired, _expiry, _mintRatio, _rrTokenAmt);
         emit RepayFunds(_col, _paired, _expiry, _mintRatio, _rrTokenAmt);
     }
     
     function rolloverLoan(
-        RolloverData memory _currentLoanPair,
-        RolloverData memory _newLoanPair
-    ) external {     
-        require(_currentLoanPair.pairedAmt <= flashLender.maxFlashLoan(_currentLoanPair.pairedToken), "RulerFlashBorrower: Insufficient lender reserves");
-        RolloverData[2] memory params = [_currentLoanPair, _newLoanPair];
-        flashLender.flashLoan(IERC3156FlashBorrower(address(this)), _currentLoanPair.pairedToken, _currentLoanPair.pairedAmt, abi.encode(params));
-
+        RolloverData memory _currentLoan,
+        RolloverData memory _newLoan
+    ) external { 
+        require(_currentLoan.pairedAmt <= flashLender.maxFlashLoan(address(_currentLoan.pairedToken)), "RulerFlashBorrower: Insufficient lender reserves");
+        _currentLoan.pairedToken.safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
+        RolloverData[2] memory params = [_currentLoan, _newLoan];
+        flashLender.flashLoan(IERC3156FlashBorrower(address(this)), address(_currentLoan.pairedToken), _currentLoan.pairedAmt, abi.encode(params));
     }
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
         RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
         require(initiator == address(this), "RulerFlashBorrower: Untrusted loan initiator");
-        
         // // Repay the old deposit.         
         // repayFunds(rData.colToken, token, amount);
         // // Deposit collateral once again at a later date. 
