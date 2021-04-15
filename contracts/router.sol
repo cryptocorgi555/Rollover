@@ -83,6 +83,8 @@ contract Router is Ownable{
         // repayFunds(rData.colToken, token, amount);
         // // Deposit collateral once again at a later date. 
         // depositFunds(rData.colToken, token, rData.colAmt);
+        // swap on the metapool
+
         
         uint256 amountOwed = amount + fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
