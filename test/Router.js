@@ -99,8 +99,18 @@ describe("Router", function() {
 
     describe("Intermediary Flashloan", () => {
         before(async () => {
+            await DAI.transfer(router.address, loan_amount); //This should not be here, need to swap rc for dai inside router.
             DAI = new ethers.Contract(DAI_CONTRACT_ADDRESS, ERC20ABI, user1);
             router = router.connect(user1);
+
+            await router.depositFunds(WETH_CONTRACT_ADDRESS, 
+                DAI_CONTRACT_ADDRESS, 
+                weth_tenth,
+                expiry,
+                mintRatio);
+
+            expect(await rrToken.balanceOf(router.address)).to.equal(loan_amount);
+            expect(await wETH.balanceOf(router.address)).to.equal(0);
         });
 
         it("Should do the flashloan", async () => {

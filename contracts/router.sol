@@ -80,12 +80,20 @@ contract Router is Ownable{
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
         require(initiator == address(this), "RulerFlashBorrower: Untrusted loan initiator");
         // // Repay the old deposit.         
-        // repayFunds(rData.colToken, token, amount);
+        repayFunds(address(params[0].colToken), 
+                    address(params[0].pairedToken), 
+                    params[0].pairedAmt, 
+                    params[0].expiry, 
+                    params[0].mintRatio);
         // // Deposit collateral once again at a later date. 
-        // depositFunds(rData.colToken, token, rData.colAmt);
-        // swap on the metapool
+        depositFunds(address(params[1].colToken), 
+                    address(params[1].pairedToken), 
+                    params[1].colAmt,
+                    params[1].expiry,
+                    params[1].mintRatio);
 
-        
+        // swap on the metapool
+ 
         uint256 amountOwed = amount + fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
         IERC20(token).approve(address(flashLender), amountOwed);
