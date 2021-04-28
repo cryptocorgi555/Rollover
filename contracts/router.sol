@@ -6,6 +6,8 @@ import "./interfaces/IRERC20.sol";
 import "./interfaces/IERC3156FlashLender.sol";
 import "./interfaces/IERC3156FlashBorrower.sol";
 import "./interfaces/IRulerCore.sol";
+import "./interfaces/ICurvePool.sol";
+import "./interfaces/ICurveFactory.sol";
 import "./utils/Ownable.sol";
 import "hardhat/console.sol";
 
@@ -20,18 +22,22 @@ contract Router is Ownable{
         uint256 colAmt;
         uint48 expiry;
         uint256 mintRatio;
+        // address swapPool;
     }
 
     IRulerCore public rulerCore;
     IERC3156FlashLender public flashLender;
+    ICurveFactory public curveFactory;
+    
 
     event DepositFunds(address _addr, address _col, address _paired, uint256 _colAmt, uint48 _expiry, uint256 _mintRatio);
     event RepayFunds(address _col, address _paired, uint48 _expiry, uint256 _mintRatio, uint256 _rrTokenAmt);
 
 
-    constructor(address _rulerCore){
+    constructor(address _rulerCore, address _curveFactory){
         rulerCore = IRulerCore(_rulerCore);
         flashLender = IERC3156FlashLender(_rulerCore);
+        curveFactory = ICurveFactory(_curveFactory);
     }
 
 
@@ -77,27 +83,46 @@ contract Router is Ownable{
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
         RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
+        RolloverData memory from = params[0];
+        RolloverData memory to = params[1];
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
         require(initiator == address(this), "RulerFlashBorrower: Untrusted loan initiator");
         // // Repay the old deposit.         
-        repayFunds(address(params[0].colToken), 
-                    address(params[0].pairedToken), 
-                    params[0].pairedAmt, 
-                    params[0].expiry, 
-                    params[0].mintRatio);
+        repayFunds(address(from.colToken), 
+                    address(from.pairedToken), 
+                    from.pairedAmt, 
+                    from.expiry, 
+                    from.mintRatio);
         // // Deposit collateral once again at a later date. 
-        depositFunds(address(params[1].colToken), 
-                    address(params[1].pairedToken), 
-                    params[1].colAmt,
-                    params[1].expiry,
-                    params[1].mintRatio);
+        depositFunds(address(to.colToken), 
+                    address(to.pairedToken), 
+                    to.colAmt,
+                    to.expiry,
+                    to.mintRatio);
 
         // swap on the metapool
- 
+        
+        ( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
+        // ICurvePool pool = ICurvePool(address(params[1].colToken)); // Actual pool address here
+        // (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
+        //
+        // pool.exchange_underlying(i, j, dx, min_dy);
+
+        
+
         uint256 amountOwed = amount + fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
         IERC20(token).approve(address(flashLender), amountOwed);
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }   
+
+    function curveTestInterraction(bytes calldata data) public returns (int128){
+        RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
+        RolloverData memory from = params[0];
+        RolloverData memory to = params[1];
+        //( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
+        // (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
+        return 5;
+    }
 }
 
