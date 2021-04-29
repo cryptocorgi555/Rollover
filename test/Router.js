@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require("path");
 
-LOGGER = true;
+LOGGER = false;
 
 function logger(message){
     if (LOGGER === true){
@@ -16,6 +16,7 @@ describe("Router", function() {
     const PAIRED_CONTRACT_ADDRESS = "0x6b175474e89094c44da98b954eedeac495271d0f";
     const CURVE_FACTORY = "0x0959158b6040D32d04c301A72CBFD6b39E21c9AE";
     const SWAP_POOL_CURVE = "0x883F7d4B6B24F8BF1dB980951Ad08930D9AEC6Bc";
+    const BLACK_HOLE = "0x0000000000000000000000000000000000000000";
     
     let PAIR, COL;
     let deployer, donor, user1;
@@ -23,10 +24,10 @@ describe("Router", function() {
     let rcToken, rcTokenAddress;
     let Router, router, mintRatio, expiry;
 
-    const COL_AMT = ethers.utils.parseUnits("1", 18); //Changing from one will affect the loan_amount var.
-    // const loan_amount = ethers.utils.parseUnits("50", 18);
+    const COL_AMT = ethers.utils.parseUnits("1", 18); //Changing from one will affect the LOAN_AMOUNT var.
+    // const LOAN_AMOUNT = ethers.utils.parseUnits("50", 18);
     // let loan_fee = ethers.utils.parseUnits("56", 15);
-    let loan_amount;
+    let LOAN_AMOUNT;
 
     const ERC20ABI = JSON.parse(fs.readFileSync(path.resolve(__dirname, "./abi/IERC20.json")));
     const RULERCOREABI = JSON.parse(fs.readFileSync(path.resolve(__dirname, "./abi/RulerCore.json")));
@@ -49,9 +50,7 @@ describe("Router", function() {
         // Get the COL and DAI contracts
         COL = new ethers.Contract(COL_CONTRACT_ADDRESS, ERC20ABI, donor);
         PAIR = new ethers.Contract(PAIRED_CONTRACT_ADDRESS, ERC20ABI, donor);
-        loan_amount = ethers.utils.parseUnits("350", 18);
-        await COL.transfer(router.address, COL_AMT); // COL for individual deposit function test
-        await PAIR.transfer(router.address, loan_amount); // DAI for individual repay function test
+        
         // await PAIR.transfer(user1.address, loan_fee); //DAI for repay and FL fee
         // logger("Transfered all")
         // Get the RulerCore contract and necessary data
@@ -62,8 +61,13 @@ describe("Router", function() {
         expiry = pair.expiry;
         rrTokenAddress = pair.rrToken;
         rcTokenAddress = pair.rcToken;
-        rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, donor);
-        rcToken = new ethers.Contract(rcTokenAddress, ERC20ABI, donor); 
+        LOAN_AMOUNT = mintRatio;
+        rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, deployer);
+        rcToken = new ethers.Contract(rcTokenAddress, ERC20ABI, deployer); 
+        
+       
+        await COL.transfer(router.address, COL_AMT); // COL for individual deposit function test
+        await PAIR.transfer(router.address, LOAN_AMOUNT); // DAI for individual repay function test
 
     });
 
@@ -74,27 +78,25 @@ describe("Router", function() {
         });
         it("Should send correct funds to accounts", async () => {
             expect(await COL.balanceOf(router.address)).to.equal(COL_AMT);
-            expect(await PAIR.balanceOf(router.address)).to.equal(loan_amount);
+            expect(await PAIR.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
         });
     });
 
     describe("Individual Functions", () => {
         it("Should deposit funds correctly", async () => {
-            logger("Depositing Funds:");
-            logger(expiry);
             await router.depositFunds(COL_CONTRACT_ADDRESS, 
                                       PAIRED_CONTRACT_ADDRESS, 
                                       COL_AMT,
                                       expiry,
                                       mintRatio);
-            expect(await rrToken.balanceOf(router.address)).to.equal(loan_amount);
-            expect(await rcToken.balanceOf(router.address)).to.equal(loan_amount);
+            expect(await rrToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
+            expect(await rcToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
             expect(await COL.balanceOf(router.address)).to.equal(0);
         });
         it("Should repay funds correctly", async () => {
             await router.repayFunds(COL_CONTRACT_ADDRESS, 
                                     PAIRED_CONTRACT_ADDRESS, 
-                                    loan_amount,
+                                    LOAN_AMOUNT,
                                     expiry,
                                     mintRatio); 
 
@@ -106,36 +108,56 @@ describe("Router", function() {
 
     describe("Intermediary Flashloan", () => {
         before(async () => {
-            await PAIR.transfer(user1.address, loan_amount);
-            PAIR = new ethers.Contract(PAIRED_CONTRACT_ADDRESS, ERC20ABI, user1);
-            router = router.connect(user1);
+            // Test setup. 
+            // User has some amout of collateral. That is deposited to create some debt. 
+            // User will have some rrTokens as well as rcTokens.
+            // Send some rc tokens to the black hole
+            // We then try to do the rollower call and end up with some DAI.
+            // User needs no DAI in advance since the loan fee will be paid out from the rcToken sale on a new pair.
+
+            await COL.transfer(user1.address, COL_AMT);
+            await router.depositAndSend(COL_CONTRACT_ADDRESS, 
+                PAIRED_CONTRACT_ADDRESS, 
+                COL_AMT,
+                expiry,
+                mintRatio); //This needs to be replaced after I figure our how to get the rcToken where I need them.
+            
+            await rrToken.transfer(user1.address, LOAN_AMOUNT);
         });
 
-        it("Should do curve swap", async () => {
-            // await PAIR.approve(router.address, loan_fee);
-
-            rollowerData = {
-                pairedToken: PAIRED_CONTRACT_ADDRESS, 
-                pairedAmt: loan_amount,
-                colToken: COL_CONTRACT_ADDRESS,
-                colAmt: COL_AMT,
-                expiry: expiry,
-                mintRatio: mintRatio,
-                swapPool: SWAP_POOL_CURVE,
-            };
-
-            console.log( await router.curveTestInterraction([rollowerData, rollowerData]) );
-
-            // expect(await DAI.balanceOf(user1.address)).to.equal(0);
-            // expect(await DAI.balanceOf(router.address)).to.equal(0);
+        it("Should setup correctly", async () => {
+            expect(await rrToken.balanceOf(user1.address)).to.equal(LOAN_AMOUNT);
+            expect(await rcToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT.mul(ethers.BigNumber.from("2")));
+            expect(await rrToken.balanceOf(router.address)).to.equal(0);
+            expect(await PAIR.balanceOf(router.address)).to.equal(0);
+            expect(await PAIR.balanceOf(user1.address)).to.equal(0);
         });
+
+        // it("Should do curve swap", async () => {
+        //     // await PAIR.approve(router.address, loan_fee);
+
+        //     rollowerData = {
+        //         pairedToken: PAIRED_CONTRACT_ADDRESS, 
+        //         pairedAmt: LOAN_AMOUNT,
+        //         colToken: COL_CONTRACT_ADDRESS,
+        //         colAmt: COL_AMT,
+        //         expiry: expiry,
+        //         mintRatio: mintRatio,
+        //         swapPool: SWAP_POOL_CURVE,
+        //     };
+
+        //     let index = await router.curveTestInterraction(rollowerData);
+
+        //     // expect(await DAI.balanceOf(user1.address)).to.equal(0);
+        //     // expect(await DAI.balanceOf(router.address)).to.equal(0);
+        // });
 
         it("Should do the flashloan", async () => {
             // await DAI.approve(router.address, loan_fee);
 
             rollowerData = {
                 pairedToken: PAIRED_CONTRACT_ADDRESS, 
-                pairedAmt: loan_amount,
+                pairedAmt: LOAN_AMOUNT,
                 colToken: COL_CONTRACT_ADDRESS,
                 colAmt: COL_AMT,
                 expiry: expiry,
@@ -145,9 +167,7 @@ describe("Router", function() {
 
 
             await router.rolloverLoan(rollowerData, rollowerData);
-
-            expect(await DAI.balanceOf(user1.address)).to.equal(0);
-            expect(await DAI.balanceOf(router.address)).to.equal(0);
+            expect(await PAIR.balanceOf(user1.address)).to.not.equal(0);
         });
     });
 });

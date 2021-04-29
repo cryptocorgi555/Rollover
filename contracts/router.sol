@@ -25,6 +25,15 @@ contract Router is Ownable{
         address swapPool;
     }
 
+    struct LoanMemory{
+        uint256 rcTokenAmt;
+        int128 fromIndex;
+        int128 toIndex;
+        uint256 expectedPairedAmt;
+        uint256 resultedPairedAmt;
+        uint256 returnToUser;
+    }
+
     IRulerCore public rulerCore;
     IERC3156FlashLender public flashLender;
     ICurveFactory public curveFactory;
@@ -56,6 +65,20 @@ contract Router is Ownable{
         rulerCore.deposit(_col, _paired, _expiry, _mintRatio, _colAmt);
         emit DepositFunds(address(rulerCore), _col, _paired, _colAmt, _expiry, _mintRatio);
     }
+
+    function depositAndSend(
+        address _col,
+        address _paired,
+        uint256 _colAmt,
+        uint48 _expiry,
+        uint256 _mintRatio
+    ) public {
+        IERC20 collateral = IERC20(_col);
+        collateral.safeApprove(address(rulerCore), _colAmt);
+        rulerCore.deposit(_col, _paired, _expiry, _mintRatio, _colAmt);
+        ( , , ,IERC20 rcToken, IERC20 rrToken, , , ) = rulerCore.pairs(_col, _paired, _expiry, _mintRatio);
+        rrToken.transfer(address(msg.sender), rrToken.balanceOf(address(this)));
+    }
     
     function repayFunds(
         address _col,
@@ -76,18 +99,26 @@ contract Router is Ownable{
         RolloverData memory _newLoan
     ) external { 
         require(_currentLoan.pairedAmt <= flashLender.maxFlashLoan(address(_currentLoan.pairedToken)), "RulerFlashBorrower: Insufficient lender reserves");
-        IERC20(_currentLoan.pairedToken).safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
+        // IERC20(_currentLoan.pairedToken).safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
         RolloverData[2] memory params = [_currentLoan, _newLoan];
         flashLender.flashLoan(IERC3156FlashBorrower(address(this)), address(_currentLoan.pairedToken), _currentLoan.pairedAmt, abi.encode(params));
     }
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
+        LoanMemory memory loanMem;
         RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
         console.log("Decoded");
         RolloverData memory from = params[0];
         RolloverData memory to = params[1];
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
         require(initiator == address(this), "RulerFlashBorrower: Untrusted loan initiator");
+
+        ( , , , IERC20 rcToken, IERC20 rrToken, , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
+        
+        // Get the users rr tokens. 
+        rrToken.safeTransferFrom(initiator, address(this), from.pairedAmt);
+
+
         // // Repay the old deposit.         
         repayFunds(address(from.colToken), 
                     address(from.pairedToken), 
@@ -103,27 +134,51 @@ contract Router is Ownable{
 
         // swap on the metapool
         
-        ( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
-        // ICurvePool pool = ICurvePool(address(params[1].colToken)); // Actual pool address here
-        // (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
-        //
-        // pool.exchange_underlying(i, j, dx, min_dy);
 
         
+        ICurvePool pool = ICurvePool(from.swapPool);
+        
+        loanMem.rcTokenAmt = rcToken.balanceOf(address(this));
+        rcToken.approve(address(pool), loanMem.rcTokenAmt);
 
+        (loanMem.fromIndex, loanMem.toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
+        loanMem.expectedPairedAmt = pool.get_dy(loanMem.fromIndex, loanMem.toIndex, loanMem.rcTokenAmt) * 95 / 10000;
+        loanMem.resultedPairedAmt = pool.exchange_underlying(loanMem.fromIndex, loanMem.toIndex, loanMem.rcTokenAmt, loanMem.expectedPairedAmt);
+        
+     
         uint256 amountOwed = amount + fee;
+        loanMem.returnToUser = loanMem.resultedPairedAmt - fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
         IERC20(token).approve(address(flashLender), amountOwed);
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }   
 
-    function curveTestInterraction(bytes calldata data) public returns (int128){
-        RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
-        RolloverData memory from = params[0];
-        RolloverData memory to = params[1];
-        //( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
+    function curveTestInterraction(RolloverData memory from) external returns (uint256){
+        
+        ( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
+
         // (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
-        return 5;
+        ICurvePool pool = ICurvePool(from.swapPool);
+        address[8] memory undCoins = curveFactory.get_underlying_coins(address(pool));
+  
+        
+        int128 fromIndex = 0;
+        int128 toIndex = 1;
+
+        console.log(rcToken.balanceOf(address(this)));
+        uint256 srcAmt = 35*10**18;
+        IERC20 erc20Contract = IERC20(address(rcToken));
+        uint256 tokenAllowance = erc20Contract.allowance(address(this), address(pool));
+        if (srcAmt > tokenAllowance) {
+            erc20Contract.approve(address(pool), srcAmt - tokenAllowance);
+        }
+
+
+        uint256 temp = 10**18;
+        uint256 wanted = 10**15;
+        uint256 gotBack = pool.exchange_underlying(fromIndex, toIndex, temp, 0);
+        console.log(gotBack);
+        return (gotBack);
     }
 }
 
