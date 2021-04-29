@@ -113,16 +113,17 @@ describe("Router", function() {
             // User will have some rrTokens as well as rcTokens.
             // Send some rc tokens to the black hole
             // We then try to do the rollower call and end up with some DAI.
-            // User needs no DAI in advance since the loan fee will be paid out from the rcToken sale on a new pair.
-
+            // User needs some DAI 
+            PAIR.transfer(user1.address, ethers.utils.parseUnits("100", 18));
+            router = router.connect(user1);
+            
             await COL.transfer(user1.address, COL_AMT);
             await router.depositAndSend(COL_CONTRACT_ADDRESS, 
                 PAIRED_CONTRACT_ADDRESS, 
                 COL_AMT,
                 expiry,
-                mintRatio); //This needs to be replaced after I figure our how to get the rcToken where I need them.
-            
-            await rrToken.transfer(user1.address, LOAN_AMOUNT);
+                mintRatio); //This needs to be replaced after I figure our how to get the rcToken where I need them
+
         });
 
         it("Should setup correctly", async () => {
@@ -130,7 +131,7 @@ describe("Router", function() {
             expect(await rcToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT.mul(ethers.BigNumber.from("2")));
             expect(await rrToken.balanceOf(router.address)).to.equal(0);
             expect(await PAIR.balanceOf(router.address)).to.equal(0);
-            expect(await PAIR.balanceOf(user1.address)).to.equal(0);
+            expect(await PAIR.balanceOf(user1.address)).to.equal(ethers.utils.parseUnits("100", 18));
         });
 
         // it("Should do curve swap", async () => {
@@ -156,6 +157,7 @@ describe("Router", function() {
             // await DAI.approve(router.address, loan_fee);
 
             rollowerData = {
+                user: user1.address,
                 pairedToken: PAIRED_CONTRACT_ADDRESS, 
                 pairedAmt: LOAN_AMOUNT,
                 colToken: COL_CONTRACT_ADDRESS,
@@ -165,9 +167,17 @@ describe("Router", function() {
                 swapPool: SWAP_POOL_CURVE
             };
 
-
+            console.log(user1.address);
+            console.log(LOAN_AMOUNT)
+            // console.log(router.address);
+            // console.log(deployer.address);
+            // console.log(donor.address);
+            rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, user1);
+            await rrToken.approve(router.address, LOAN_AMOUNT);
+            await PAIR.approve(router.address, ethers.utils.parseUnits("100", 18));
             await router.rolloverLoan(rollowerData, rollowerData);
-            expect(await PAIR.balanceOf(user1.address)).to.not.equal(0);
+            expect(await PAIR.balanceOf(user1.address)).to.not.equal(ethers.utils.parseUnits("100", 18));
+            expect(await rrToken.balanceOf(user1.address)).to.equal(LOAN_AMOUNT);
         });
     });
 });
