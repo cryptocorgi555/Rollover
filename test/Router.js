@@ -173,6 +173,7 @@ describe("Router", function() {
             // console.log(deployer.address);
             // console.log(donor.address);
             rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, user1);
+            PAIR = new ethers.Contract(PAIRED_CONTRACT_ADDRESS, ERC20ABI, user1);
             await rrToken.approve(router.address, LOAN_AMOUNT);
             await PAIR.approve(router.address, ethers.utils.parseUnits("100", 18));
             await router.rolloverLoan(rollowerData, rollowerData);

@@ -33,6 +33,7 @@ contract Router is Ownable{
         uint256 expectedPairedAmt;
         uint256 resultedPairedAmt;
         uint256 returnToUser;
+        uint256 amountOwed;
     }
 
     IRulerCore public rulerCore;
@@ -106,6 +107,12 @@ contract Router is Ownable{
         flashLender.flashLoan(IERC3156FlashBorrower(address(this)), address(_currentLoan.pairedToken), _currentLoan.pairedAmt, abi.encode(params));
     }
     
+    function curveSwap(RolloverData memory from, address rcToken) private returns (uint256){
+        (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), rcToken, address(from.pairedToken));
+        uint256 expectedPairedAmt = ICurvePool(from.swapPool).get_dy(fromIndex, toIndex, from.pairedAmt) * 95 / 10000;
+        uint256 resultedPairedAmt = ICurvePool(from.swapPool).exchange_underlying(fromIndex, toIndex, from.pairedAmt, expectedPairedAmt);
+        return resultedPairedAmt;
+    }
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
         LoanMemory memory loanMem;
@@ -140,20 +147,20 @@ contract Router is Ownable{
         loanMem.rcTokenAmt = rcToken.balanceOf(address(this));
         rcToken.approve(from.swapPool, loanMem.rcTokenAmt);
 
-        (loanMem.fromIndex, loanMem.toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
-        loanMem.expectedPairedAmt = ICurvePool(from.swapPool).get_dy(loanMem.fromIndex, loanMem.toIndex, loanMem.rcTokenAmt) * 95 / 10000;
-        loanMem.resultedPairedAmt = ICurvePool(from.swapPool).exchange_underlying(loanMem.fromIndex, loanMem.toIndex, loanMem.rcTokenAmt, loanMem.expectedPairedAmt);
-        
+        loanMem.resultedPairedAmt = curveSwap(from, address(rcToken));
      
-        uint256 amountOwed = amount + fee;
+        loanMem.amountOwed = amount + fee;
         loanMem.returnToUser = loanMem.resultedPairedAmt - fee;
         // fees are adopting pulling strategy, Ruler contract will transfer fees
         
-        IERC20(token).safeTransferFrom(from.user, address(this), amountOwed - IERC20(token).balanceOf(address(this)));
-        IERC20(token).approve(address(flashLender), amountOwed);
-        rrToken.safeTransfer(from.user, from.pairedAmt);
+        console.log( loanMem.amountOwed - IERC20(token).balanceOf(address(this)) );
 
-        console.log(IERC20(token).balanceOf(address(this)));
+        IERC20(token).safeTransferFrom(from.user, address(this), loanMem.amountOwed - IERC20(token).balanceOf(address(this)));
+        console.log("Made it here");
+        IERC20(token).approve(address(flashLender), loanMem.amountOwed);
+        rrToken.safeTransfer(from.user, from.pairedAmt);
+        
+
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }   
 
