@@ -16,13 +16,13 @@ contract Router is Ownable{
     using SafeERC20 for IERC20;
     
     struct RolloverData {
-        IERC20 pairedToken;
+        address pairedToken;
         uint256 pairedAmt;
-        IERC20 colToken;
+        address colToken;
         uint256 colAmt;
         uint48 expiry;
         uint256 mintRatio;
-        // address swapPool;
+        address swapPool;
     }
 
     IRulerCore public rulerCore;
@@ -76,13 +76,14 @@ contract Router is Ownable{
         RolloverData memory _newLoan
     ) external { 
         require(_currentLoan.pairedAmt <= flashLender.maxFlashLoan(address(_currentLoan.pairedToken)), "RulerFlashBorrower: Insufficient lender reserves");
-        _currentLoan.pairedToken.safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
+        IERC20(_currentLoan.pairedToken).safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
         RolloverData[2] memory params = [_currentLoan, _newLoan];
         flashLender.flashLoan(IERC3156FlashBorrower(address(this)), address(_currentLoan.pairedToken), _currentLoan.pairedAmt, abi.encode(params));
     }
     
     function onFlashLoan(address initiator, address token, uint256 amount, uint256 fee, bytes calldata data) external returns (bytes32) {
         RolloverData[2] memory params = abi.decode(data, (RolloverData[2]));
+        console.log("Decoded");
         RolloverData memory from = params[0];
         RolloverData memory to = params[1];
         require(msg.sender == address(flashLender), "RulerFlashBorrower: Untrusted lender");
