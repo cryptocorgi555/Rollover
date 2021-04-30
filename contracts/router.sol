@@ -40,10 +40,8 @@ contract Router is Ownable{
     IERC3156FlashLender public flashLender;
     ICurveFactory public curveFactory;
     
-
     event DepositFunds(address _addr, address _col, address _paired, uint256 _colAmt, uint48 _expiry, uint256 _mintRatio);
     event RepayFunds(address _col, address _paired, uint48 _expiry, uint256 _mintRatio, uint256 _rrTokenAmt);
-
 
     constructor(address _rulerCore, address _curveFactory){
         rulerCore = IRulerCore(_rulerCore);
@@ -51,9 +49,12 @@ contract Router is Ownable{
         curveFactory = ICurveFactory(_curveFactory);
     }
 
-
     /** @dev Deposits the funds on behalf of the user. Keeps the r tokens in itself.
-      * @param _col Height of the rectangle.
+      * @param _col Expects collateral to be in the contract
+      * @param _paired Paired Token
+      * @param _colAmt Collateral amt 18 points
+      * @param _expiry Expiry date
+      * @param _mintRatio rr tokens per unit of collateral
       */
     function depositFunds(
         address _col,
@@ -82,6 +83,12 @@ contract Router is Ownable{
         rrToken.transfer(address(msg.sender), rrToken.balanceOf(address(this)));
     }
     
+    /** @dev Repay the debt of the user.  Expect the rrTokens to be preapproved by the user.
+      * @param _col Expects collateral spending to be preapproved
+      * @param _paired Paired Token
+      * @param _expiry Expiry date
+      * @param _mintRatio rr tokens per unit of collateral
+      */
     function repayFunds(
         address _col,
         address _paired,
@@ -96,17 +103,24 @@ contract Router is Ownable{
         emit RepayFunds(_col, _paired, _expiry, _mintRatio, _rrTokenAmt);
     }
     
+    /** @dev Trigers the rollover process.
+      * @param _currentLoan metadata of the curent pair that the user owns debt in.
+      * @param _newLoan metadata with the new pair
+      */
     function rolloverLoan(
         RolloverData memory _currentLoan,
         RolloverData memory _newLoan
     ) external { 
         require(_currentLoan.pairedAmt <= flashLender.maxFlashLoan(address(_currentLoan.pairedToken)), "RulerFlashBorrower: Insufficient lender reserves");
         console.log("Fee amount: %s", flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
-        // IERC20(_currentLoan.pairedToken).safeTransferFrom(msg.sender, address(this), flashLender.flashFee(address(_currentLoan.pairedToken), _currentLoan.pairedAmt));
         RolloverData[2] memory params = [_currentLoan, _newLoan];
         flashLender.flashLoan(IERC3156FlashBorrower(address(this)), address(_currentLoan.pairedToken), _currentLoan.pairedAmt, abi.encode(params));
     }
     
+    /** @dev Swap tokens in the metapool
+      * @param from info about the token amount and pool
+      * @param rcToken rcToken address
+      */
     function curveSwap(RolloverData memory from, address rcToken) private returns (uint256){
         (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), rcToken, address(from.pairedToken));
         uint256 expectedPairedAmt = ICurvePool(from.swapPool).get_dy(fromIndex, toIndex, from.pairedAmt) * 95 / 10000;
@@ -141,55 +155,18 @@ contract Router is Ownable{
                     to.expiry,
                     to.mintRatio);
 
-        // swap on the metapool
-        // ICurvePool pool = ICurvePool(from.swapPool);
         
         loanMem.rcTokenAmt = rcToken.balanceOf(address(this));
         rcToken.approve(from.swapPool, loanMem.rcTokenAmt);
-
         loanMem.resultedPairedAmt = curveSwap(from, address(rcToken));
      
         loanMem.amountOwed = amount + fee;
         loanMem.returnToUser = loanMem.resultedPairedAmt - fee;
-        // fees are adopting pulling strategy, Ruler contract will transfer fees
         
-        console.log( loanMem.amountOwed - IERC20(token).balanceOf(address(this)) );
-
         IERC20(token).safeTransferFrom(from.user, address(this), loanMem.amountOwed - IERC20(token).balanceOf(address(this)));
-        console.log("Made it here");
         IERC20(token).approve(address(flashLender), loanMem.amountOwed);
         rrToken.safeTransfer(from.user, from.pairedAmt);
-        
-
         return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }   
-
-    function curveTestInterraction(RolloverData memory from) external returns (uint256){
-        
-        ( , , , IRERC20 rcToken, , , , ) = rulerCore.pairs(address(from.colToken), address(from.pairedToken), from.expiry, from.mintRatio);
-
-        // (int128 fromIndex, int128 toIndex, ) = curveFactory.get_coin_indices(address(from.swapPool), address(rcToken), address(from.pairedToken));
-        ICurvePool pool = ICurvePool(from.swapPool);
-        address[8] memory undCoins = curveFactory.get_underlying_coins(address(pool));
-  
-        
-        int128 fromIndex = 0;
-        int128 toIndex = 1;
-
-        console.log(rcToken.balanceOf(address(this)));
-        uint256 srcAmt = 35*10**18;
-        IERC20 erc20Contract = IERC20(address(rcToken));
-        uint256 tokenAllowance = erc20Contract.allowance(address(this), address(pool));
-        if (srcAmt > tokenAllowance) {
-            erc20Contract.approve(address(pool), srcAmt - tokenAllowance);
-        }
-
-
-        uint256 temp = 10**18;
-        uint256 wanted = 10**15;
-        uint256 gotBack = pool.exchange_underlying(fromIndex, toIndex, temp, 0);
-        console.log(gotBack);
-        return (gotBack);
-    }
 }
 
