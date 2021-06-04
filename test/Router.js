@@ -117,13 +117,12 @@ describe("Router", function() {
             LOAN_AMOUNT = await rrToken.balanceOf(borrower.address);
             FEE_AMOUNT = ethers.BigNumber.from("17850000000000000000");
             await PAIR.transfer(borrower.address, LOAN_AMOUNT.add(FEE_AMOUNT)) // This is much more than required to repay the flash loan 
-             
         });
 
         it("Should setup correctly", async () => {
             expect(await rrToken.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT);
+            expect(await rrToken.balanceOf(router.address)).to.equal(0);
             expect(await PAIR.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT.add(FEE_AMOUNT));
-           
         });
 
     //     it("Should do curve swap", async () => {
