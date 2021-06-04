@@ -151,7 +151,6 @@ describe("Router", function() {
             await router.rolloverLoan(rollowerData);
             
             expect(LOAN_AMOUNT.add(FEE_AMOUNT).sub((await PAIR.balanceOf(borrower.address)))).to.not.equal(0);
-
             expect(await rrToken.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT);
         });
     });
