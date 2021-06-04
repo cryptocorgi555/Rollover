@@ -46,7 +46,6 @@ describe("Router", function() {
             params: ["0x9FEF86F76af2b459BBbb137918f8e589dB683381"]}
         )
 
-
         //Get signer accounts
         borrower = await ethers.getSigner("0x9FEF86F76af2b459BBbb137918f8e589dB683381")
         donor = await ethers.getSigner("0xaae0633e15200bc9c50d45cd762477d268e126bd");
@@ -55,9 +54,7 @@ describe("Router", function() {
 
         // Get the COL and DAI contracts
         COL = new ethers.Contract(COL_CONTRACT_ADDRESS, ERC20ABI, donor);
-
         PAIR = new ethers.Contract(PAIRED_CONTRACT_ADDRESS, ERC20ABI, donor);
-
         rulerCore = new ethers.Contract(RULER_CORE_CONTRACT_ADDRESS, RULERCOREABI, borrower);
         
         // Obtain the data related to the last pair of collateral. 
@@ -67,7 +64,7 @@ describe("Router", function() {
         expiry = pair.expiry;
         rrTokenAddress = pair.rrToken;
         rcTokenAddress = pair.rcToken;
-        LOAN_AMOUNT = mintRatio.mul(COLCNT);
+        LOAN_AMOUNT = mintRatio.mul(COLCNT); // This is how much loan in rc and rr you would get
         rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, deployer);
         rcToken = new ethers.Contract(rcTokenAddress, ERC20ABI, deployer); 
         
@@ -94,7 +91,7 @@ describe("Router", function() {
                                       COL_AMT,
                                       expiry,
                                       mintRatio);
-            expect(await rrToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
+            expect(await rrToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT); 
             expect(await rcToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
             expect(await COL.balanceOf(router.address)).to.equal(0);
         });
@@ -108,46 +105,33 @@ describe("Router", function() {
             expect(await COL.balanceOf(router.address)).to.equal(COL_AMT);
             expect(await rrToken.balanceOf(router.address)).to.equal(0);
             expect(await PAIR.balanceOf(router.address)).to.equal(0);
+            expect(await rcToken.balanceOf(router.address)).to.equal(LOAN_AMOUNT);
         });
     });
 
     describe("Intermediary Flashloan", () => {
         before(async () => {
-            // Fetch the amount of debt the borrower has.
+            // Fetch the amount of debt the impersonated borrower has.
             LOAN_AMOUNT = await rrToken.balanceOf(borrower.address);
+            // 21k * 0.085% 0.00085 ~ 17.85 Stable
             FEE_AMOUNT = ethers.BigNumber.from("17850000000000000000");
-            await PAIR.transfer(borrower.address, LOAN_AMOUNT.add(FEE_AMOUNT)) // This is much more than required to repay the flash loan 
+            // User will only need the difference between the loan amount he has + FL fee - cost of his new rc
+            // FL is taken for the enitre loan amount dispite possibility that user might have some stable to lower this
+            // Here I transfer him much more stables than he would ever need
+            await PAIR.transfer(borrower.address, LOAN_AMOUNT.add(FEE_AMOUNT));
         });
 
         it("Should setup correctly", async () => {
             expect(await rrToken.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT);
             expect(await rrToken.balanceOf(router.address)).to.equal(0);
             expect(await PAIR.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT.add(FEE_AMOUNT));
+            expect(await PAIR.balanceOf(router.address)).to.equal(0);
         });
-
-    //     it("Should do curve swap", async () => {
-    //         // await PAIR.approve(router.address, loan_fee);
-
-    //         rollowerData = {
-    //             pairedToken: PAIRED_CONTRACT_ADDRESS, 
-    //             pairedAmt: LOAN_AMOUNT,
-    //             colToken: COL_CONTRACT_ADDRESS,
-    //             colAmt: COL_AMT,
-    //             expiry: expiry,
-    //             mintRatio: mintRatio,
-    //             swapPool: SWAP_POOL_CURVE_ADRESS,
-    //         };
-
-    //         let index = await router.curveTestInterraction(rollowerData);
-
-    //         // expect(await DAI.balanceOf(user1.address)).to.equal(0);
-    //         // expect(await DAI.balanceOf(router.address)).to.equal(0);
-    //     });
 
         it("Should do the flashloan", async () => {
 
             rollowerData = {
-                user: borrower.address, //Try to eliminate later
+                user: borrower.address,
                 pairedToken: PAIRED_CONTRACT_ADDRESS, 
                 pairedAmt: LOAN_AMOUNT,
                 colToken: COL_CONTRACT_ADDRESS,
@@ -158,29 +142,17 @@ describe("Router", function() {
                 swapPool: SWAP_POOL_CURVE_ADRESS
             };
 
-            // // Connect to the tokens as a borrower
+            // Connect to the tokens as a borrower
             rrToken = new ethers.Contract(rrTokenAddress, ERC20ABI, borrower);
             PAIR = new ethers.Contract(PAIRED_CONTRACT_ADDRESS, ERC20ABI, borrower);
 
-        
             await rrToken.approve(router.address, LOAN_AMOUNT);
-            await PAIR.approve(router.address, LOAN_AMOUNT.add(FEE_AMOUNT));
+            await PAIR.approve(router.address, LOAN_AMOUNT.add(FEE_AMOUNT)); //Much exsessive
             await router.rolloverLoan(rollowerData);
-            // expect(await PAIR.balanceOf(borrower.address)).to.not.equal(ethers.utils.parseUnits("100", 18));
-            // expect(await rrToken.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT);
+            
+            expect(LOAN_AMOUNT.add(FEE_AMOUNT).sub((await PAIR.balanceOf(borrower.address)))).to.not.equal(0);
+
+            expect(await rrToken.balanceOf(borrower.address)).to.equal(LOAN_AMOUNT);
         });
     });
 });
-
-// Questions
-// 1. Could not deploy from the donor address. 
-// 2. Something wrong wiht the transfer of funds. They do not dissapear from the router address.
-// 3. What is mmDeposit and depositWithPermit?
-
-
-// TO_DO
-// 1. Get the flash loan fee so router gets approved the exact amount. This can be done on the client. 
-// 2. Figure this parameter as bytes or roloverdata in router.
-// 3. Argument verification.
-// 4. Compute the loan fee
-// 5. mintRatio to string 
