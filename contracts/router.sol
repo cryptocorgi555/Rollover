@@ -10,9 +10,10 @@ import "./interfaces/ICurvePool.sol";
 import "./interfaces/ICurveFactory.sol";
 import "./utils/Ownable.sol";
 import "hardhat/console.sol";
+import "./utils/ReentrancyGurad.sol";
 
 /** @title Auto Loan Rollover Router. */
-contract Router is Ownable{
+contract Router is Ownable, ReentrancyGuard{
     using SafeERC20 for IERC20;
     
     struct RolloverData {
@@ -53,7 +54,7 @@ contract Router is Ownable{
         uint256 _colAmt,
         uint48 _expiry,
         uint256 _mintRatio
-    ) public {
+    ) public nonReentrant{
         IERC20 collateral = IERC20(_col);
         require(collateral.balanceOf(address(this)) >= _colAmt, "Insufficient collateral balance to deposit funds.");
         collateral.safeApprove(address(rulerCore), _colAmt);
@@ -73,7 +74,7 @@ contract Router is Ownable{
         uint256 _pairedAmt,
         uint48 _expiry,
         uint256 _mintRatio
-    ) public {
+    ) public nonReentrant{
         IERC20 paired = IERC20(_paired);
         require(paired.balanceOf(address(this)) >= _pairedAmt, "Insufficient paired token amount to repay the laon");
         paired.safeApprove(address(rulerCore), _pairedAmt);
